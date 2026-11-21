@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import logo from "./assets/logo.jpg";
-
+import logo from './assets/logo.png';
 import {
   UploadCloud, FileAudio, Play, Clock, Cpu, Check, Copy, FileText,
   Tags, Sparkles, X, Headphones, CircleHelp, AudioWaveform,
@@ -9,7 +8,7 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-const API_BASE_URL =  "http://127.0.0.1:8001";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 const FORMATS = ["MP3", "WAV", "M4A", "MPEG", "MPGA", "WEBM"];
 const INITIAL_DATA = {
   totalTime: "۱۰۹.۳۲ ثانیه",
@@ -87,9 +86,7 @@ function AuthScreen({ onLogin }) {
   };
   return <main className="auth-shell" dir="rtl">
     <form className="auth-card" onSubmit={submit}>
-      <img src={logo} alt="logo" className="logo"/>
-     
-      <p className="muted">فضای هوشمند تبدیل و تحلیل فایل‌های صوتی</p>
+      <img className="auto-logo" src={logo} alt="logo" />
       <div className="auth-tabs">
         <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}><LogIn size={16}/> ورود</button>
         <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}><UserPlus size={16}/> ثبت‌نام</button>
@@ -108,6 +105,10 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [language, setLanguage] = useState("fa");
   const [loading, setLoading] = useState(false);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [editingTranscript, setEditingTranscript] = useState(false);
+  const [draftTranscript, setDraftTranscript] = useState("");
+  const [currentRecordId, setCurrentRecordId] = useState(null);
   const [factLoading, setFactLoading] = useState(false);
   const [factOpen, setFactOpen] = useState(false);
   const [factCheck, setFactCheck] = useState("");
@@ -120,6 +121,18 @@ export default function App() {
   const fileInputRef = useRef(null);
 
   useEffect(() => localStorage.setItem("peyNevisHistory", JSON.stringify(history)), [history]);
+
+  // نوار پیشرفت تخمینی سمت رابط؛ برای درصد واقعی باید API رویداد progress ارسال کند.
+  useEffect(() => {
+    if (!loading) return undefined;
+    const timer = window.setInterval(() => {
+      setProgressPercent(value => Math.min(value + 1, 95));
+    }, 180);
+    return () => window.clearInterval(timer);
+  }, [loading]);
+
+  const isRtl = language !== "en";
+  const textDirection = isRtl ? "rtl" : "ltr";
 
   const handleFileChange = (selectedFile) => {
     if (!selectedFile) return;
@@ -135,7 +148,7 @@ export default function App() {
       setNotice("آدرس API تنظیم نشده است. فایل نمونه نمایش داده می‌شود؛ برای پردازش واقعی VITE_API_URL را تنظیم کنید.");
       return;
     }
-    setLoading(true); setNotice("");
+    setLoading(true); setProgressPercent(0); setNotice("");
     try {
       const form = new FormData();
       form.append("file", file.originalFile);
@@ -151,11 +164,14 @@ export default function App() {
         questions: payload.questions ?? INITIAL_DATA.questions
       };
       setResultData(normalized); setFactCheck(""); setFactOpen(false);
-      const record = { id: Date.now(), name: file.name, date: new Date().toLocaleString("fa-IR"), language, transcript: normalized.transcript, summary: normalized.summary };
+      setEditingTranscript(false); setDraftTranscript("");
+      setProgressPercent(100);
+      const record = { id: Date.now(), name: file.name, date: new Date().toLocaleString(isRtl ? "fa-IR" : "en-US"), language, transcript: normalized.transcript, summary: normalized.summary };
+      setCurrentRecordId(record.id);
       setHistory(prev => [record, ...prev].slice(0, 50));
       setNotice("پردازش با موفقیت انجام شد.");
     } catch (err) {
-      console.error(err); setNotice("ارتباط با API ناموفق بود. آدرس سرویس و ساختار پاسخ را بررسی کنید.");
+      console.error(err); setProgressPercent(0); setNotice("ارتباط با API ناموفق بود. آدرس سرویس و ساختار پاسخ را بررسی کنید.");
     } finally { setLoading(false); }
   };
 
@@ -179,6 +195,22 @@ export default function App() {
     } finally { setFactLoading(false); }
   };
 
+  const beginTranscriptEdit = () => {
+    setDraftTranscript(resultData.transcript || "");
+    setEditingTranscript(true);
+  };
+
+  const saveTranscriptEdit = () => {
+    const updatedTranscript = draftTranscript.trim();
+    if (!updatedTranscript) { setNotice("متن پیاده‌سازی‌شده نمی‌تواند خالی باشد."); return; }
+    setResultData(prev => ({ ...prev, transcript: updatedTranscript }));
+    setHistory(prev => prev.map(item => item.id === currentRecordId ? { ...item, transcript: updatedTranscript } : item));
+    setEditingTranscript(false);
+    setFactCheck("");
+    setFactOpen(false);
+    setNotice("ویرایش متن ذخیره شد.");
+  };
+
   const handleCopy = async () => {
     try { await navigator.clipboard.writeText(resultData.transcript); setCopied(true); setTimeout(() => setCopied(false), 1800); }
     catch { setNotice("امکان کپی متن وجود ندارد."); }
@@ -187,9 +219,9 @@ export default function App() {
   const logout = () => { localStorage.removeItem("peyNevisUser"); setUser(null); setPage("app"); };
   if (!user) return <AuthScreen onLogin={setUser}/>;
 
-  if (page === "profile") return <div className="app-container" dir="rtl">
+  if (page === "profile") return <div className="app-container" dir={textDirection} lang={language}>
     <header className="main-header">
-      <button className="brand brand-button" onClick={() => setPage("app")}><img src={logo} alt="logo" className="logo"/></button>
+      <button className="brand brand-button" onClick={() => setPage("app")}><img className="auto-logo" src={logo} alt="logo" /></button>
       <nav className="header-actions"><button onClick={() => setPage("app")}><FileAudio size={17}/> پردازش صوت</button><button onClick={logout}><LogOut size={17}/> خروج</button></nav>
     </header>
     <main className="profile-page">
@@ -197,16 +229,16 @@ export default function App() {
       <section className="content-card">
         <div className="section-heading"><History/><h2>تاریخچه فایل‌های پردازش‌شده</h2><span className="history-count">{history.length} فایل</span></div>
         {history.length === 0 ? <p className="empty-state">هنوز فایلی پردازش نکرده‌اید.</p> : <div className="history-list">
-          {history.map(item => <article className="history-item" key={item.id}><div className="file-icon"><FileAudio/></div><div className="history-meta"><b dir="ltr">{item.name}</b><small>{item.date} · زبان: {item.language}</small><p>{item.summary}</p></div><button className="small-btn" onClick={() => { setResultData({ ...INITIAL_DATA, transcript: item.transcript, summary: item.summary }); setPage("app"); }}>مشاهده</button></article>)}
+          {history.map(item => <article className="history-item" key={item.id}><div className="file-icon"><FileAudio/></div><div className="history-meta"><b dir="ltr">{item.name}</b><small>{item.date} · زبان: {item.language}</small><p>{item.summary}</p></div><button className="small-btn" onClick={() => { setResultData({ ...INITIAL_DATA, transcript: item.transcript, summary: item.summary }); setCurrentRecordId(item.id); setLanguage(item.language || "fa"); setPage("app"); }}>مشاهده</button></article>)}
         </div>}
       </section>
     </main>
     <footer className="app-footer">© {new Date().getFullYear()} Peyv-Nevis</footer>
   </div>;
 
-  return <div className="app-container" dir="rtl">
+  return <div className="app-container" dir={textDirection} lang={language}>
     <header className="main-header">
-      <img src={logo} alt="logo" className="logo"/>
+      <img className="auto-logo" src={logo} alt="logo" />
       <div className="header-actions"><span className="header-badge"><Sparkles size={15}/> یادگیری هوشمند، با هر صدا</span><button onClick={() => setPage("profile")}><User size={17}/> پروفایل</button><button onClick={logout}><LogOut size={17}/> خروج</button></div>
     </header>
 
@@ -224,6 +256,18 @@ export default function App() {
           <select value={language} onChange={e => setLanguage(e.target.value)}><option value="fa">فارسی</option><option value="en">انگلیسی</option><option value="ku">کردی</option></select>
         </label>
         <button className="process-button" onClick={handleProcessAudio} disabled={loading}>{loading ? <><LoaderCircle className="spin"/> در حال پردازش...</> : <>پردازش فایل <Play size={18}/></>}</button>
+        {(loading || progressPercent > 0) && <section className="processing-progress" aria-live="polite" aria-label="مراحل پردازش صوت">
+          <div className="progress-heading"><strong>مراحل پردازش</strong><span>{progressPercent}%</span></div>
+          <div className="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }}/></div>
+          <ol className="progress-steps">
+            {(language === "en" ? ["Noise reduction", "Speech to text", "Summarization"] : language === "ku" ? ["لابردنی ژاوەژاو", "گۆڕینی دەنگ بۆ دەق", "پوختەکردنەوە"] : ["حذف نویز", "تبدیل گفتار به متن", "خلاصه‌سازی"]).map((step, index) => {
+              const done = progressPercent >= [35, 75, 100][index];
+              const active = loading && progressPercent < [35, 75, 100][index] && (index === 0 || progressPercent >= [0, 35, 75][index]);
+              return <li key={step} className={`${done ? "done" : ""} ${active ? "current" : ""}`}><span className="step-marker">{done ? <Check size={13}/> : index + 1}</span><span>{step}</span></li>;
+            })}
+          </ol>
+          <p className="progress-caption">{loading ? (language === "en" ? "Processing is underway; the displayed percentage is an estimate." : language === "ku" ? "پرۆسەکە بەردەوامە؛ ڕێژەی پیشاندراو خەمڵێنراوە." : "در حال اجرای مراحل پردازش؛ درصد نمایش‌داده‌شده تخمینی است.") : (language === "en" ? "Processing completed successfully." : language === "ku" ? "پرۆسەکە بە سەرکەوتوویی تەواو بوو." : "پردازش با موفقیت تکمیل شد.")}</p>
+        </section>}
         {notice && <p className="notice" role="status">{notice}</p>}
         <p className="api-hint">زبان انتخاب‌شده همراه فایل با کلید <code>language</code> ارسال می‌شود.</p>
       </aside>
@@ -241,8 +285,15 @@ export default function App() {
             <div className="dropdown-wrap"><button className="download-btn" onClick={() => setDownloadOpen(v => !v)}><Download size={17}/> دانلود خروجی <ChevronDown size={15}/></button>{downloadOpen && <div className="dropdown-menu"><button onClick={() => { exportDocument({ ...resultData, factCheck }, "pdf"); setDownloadOpen(false); }}>دانلود PDF</button><button onClick={() => { exportDocument({ ...resultData, factCheck }, "word"); setDownloadOpen(false); }}>دانلود Word</button></div>}</div>
             <button className="copy-button" onClick={handleCopy} title="کپی متن">{copied ? <Check size={18}/> : <Copy size={18}/>}</button>
           </div></div>
-          <p className="transcript-text">{resultData.transcript}</p>
-          <button className="fact-check-btn" onClick={handleFactCheck} disabled={factLoading}>{factLoading ? <LoaderCircle className="spin"/> : <ShieldCheck size={18}/>} بررسی و اصلاح علمی</button>
+          {editingTranscript ? <div className="transcript-editor">
+            <label htmlFor="transcript-edit">متن را بازبینی و اصلاح کنید</label>
+            <textarea id="transcript-edit" dir={textDirection} value={draftTranscript} onChange={e => setDraftTranscript(e.target.value)} rows={8} spellCheck="true" />
+            <div className="editor-actions"><button className="save-edit-btn" onClick={saveTranscriptEdit}><Check size={16}/> ذخیره و اعمال تغییرات</button><button className="cancel-edit-btn" onClick={() => setEditingTranscript(false)}>انصراف</button></div>
+          </div> : <>
+            <p className="transcript-text" dir={textDirection}>{resultData.transcript}</p>
+            <button className="edit-transcript-btn" onClick={beginTranscriptEdit}><FileText size={17}/> ویرایش متن</button>
+          </>}
+          <button className="fact-check-btn" onClick={handleFactCheck} disabled={factLoading || editingTranscript}>{factLoading ? <LoaderCircle className="spin"/> : <ShieldCheck size={18}/>} بررسی و اصلاح علمی</button>
           {factOpen && <div className="fact-check-box"><div className="fact-title"><ShieldCheck size={20}/><b>نتیجه بررسی و اصلاح علمی</b><button onClick={() => setFactOpen(false)} aria-label="بستن"><X size={17}/></button></div>{factLoading ? <p>در حال بررسی محتوای علمی...</p> : <p className="fact-content">{factCheck}</p>}</div>}
         </div>
 
